@@ -186,3 +186,17 @@ Keystore в репо — публичный dev-ключ, перед публи�
 ---
 
 Сделано как MVP на один сеанс. Серверная часть production-ready (JWT, bcrypt, валидация, multer, Socket.IO с auth handshake). UI — полнофункциональный мессенджер без рекламы и без номера телефона.
+
+## Генерация своего release-ключа для подписи APK
+
+Файл `android/midnight-release.keystore` исключён из репо (это секрет). Чтобы пересобрать APK под себя:
+
+```bash
+keytool -genkey -v -keystore android/midnight-release.keystore \
+  -alias midnight -keyalg RSA -keysize 2048 -validity 10000 \
+  -storepass YOUR_PASS -keypass YOUR_PASS \
+  -dname "CN=Your Name, OU=Personal, O=Self"
+```
+
+И поменять пароли/alias в `android/app/build.gradle` → `signingConfigs { midnight { ... } }`.
+

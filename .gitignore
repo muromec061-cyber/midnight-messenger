@@ -8,5 +8,7 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+android/midnight-release.keystore
+MidnightMessenger.apk
 *.log
 .DS_Store
