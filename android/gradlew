@@ -1,0 +1,6 @@
+#!/bin/sh
+# Minimal gradlew that uses the wrapper jar
+APP_HOME="$( cd -P "$( dirname "$0" )" >/dev/null && pwd )"
+CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+JAVA_OPTS="-Xmx2048m"
+exec "${JAVA_HOME:-/usr}/bin/java" $JAVA_OPTS -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"

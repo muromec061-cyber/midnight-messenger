@@ -1,0 +1,12 @@
+node_modules/
+data/users.json
+data/messages.json
+data/conversations.json
+data/uploads/*
+!data/uploads/.gitkeep
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.log
+.DS_Store

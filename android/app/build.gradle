@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.midnight.messenger'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.midnight.messenger"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+        vectorDrawables.useSupportLibrary = true
+    }
+
+    signingConfigs {
+        midnight {
+            storeFile file('../midnight-release.keystore')
+            storePassword 'midnight2026'
+            keyAlias 'midnight'
+            keyPassword 'midnight2026'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            signingConfig signingConfigs.midnight
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // Assets are copied from ../../public automatically by the task below
+    sourceSets.main.assets.srcDirs += ['src/main/assets']
+}
+
+task copyPublic(type: Copy) {
+    from fileTree('../../public').exclude(['sw.js']) // SW doesn't run from APK
+    into 'src/main/assets/www'
+}
+
+preBuild.dependsOn copyPublic
