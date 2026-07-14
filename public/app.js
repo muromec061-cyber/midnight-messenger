@@ -48,13 +48,23 @@
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   }
+  // Allow only safe URL schemes to block javascript:/data:text XSS in
+  // user-controlled links (file messages, avatars).
+  function safeUrl(u) {
+    const s = String(u || '').trim();
+    if (/^https?:\/\//i.test(s)) return s;
+    if (/^data:image\//i.test(s)) return s;
+    if (/^\//.test(s) && !/^\/\//.test(s)) return s;
+    return '';
+  }
   function initials(name) {
     if (!name) return '?';
     const parts = name.trim().split(/\s+/);
     return ((parts[0][0] || '') + (parts[1]?.[0] || '')).toUpperCase();
   }
   function avatarOf(user) {
-    if (user?.avatar) return `<span class="avatar" style="background-image:url('${escapeHtml(user.avatar)}')"></span>`;
+    const safe = user?.avatar ? safeUrl(user.avatar) : '';
+    if (safe) return `<span class="avatar" style="background-image:url('${escapeHtml(safe)}')"></span>`;
     return `<span class="avatar">${escapeHtml(initials(user?.displayName || user?.username || '?'))}</span>`;
   }
   function peerLabel(chat) {
@@ -167,7 +177,8 @@
   }
 
   function renderMe() {
-    $('#meAvatar').style.backgroundImage = state.me.avatar ? `url('${state.me.avatar}')` : '';
+    const meAv = safeUrl(state.me.avatar);
+    $('#meAvatar').style.backgroundImage = meAv ? `url('${meAv}')` : '';
     $('#meAvatar').textContent = state.me.avatar ? '' : initials(state.me.displayName || state.me.username);
     $('#meName').textContent = state.me.displayName || state.me.username;
     $('#meHandle').textContent = '@' + state.me.username;
@@ -257,7 +268,9 @@
 
   function formatBubbleContent(m) {
     if (m.type === 'file') {
-      return `<div class="file"><a href="${escapeHtml(m.content.url)}" target="_blank" rel="noopener">📎 ${escapeHtml(m.content.name || 'файл')}</a></div>`;
+      const href = safeUrl(m.content && m.content.url);
+      if (!href) return `<div class="file">📎 ${escapeHtml((m.content && m.content.name) || 'файл')}</div>`;
+      return `<div class="file"><a href="${escapeHtml(href)}" target="_blank" rel="noopener">📎 ${escapeHtml(m.content.name || 'файл')}</a></div>`;
     }
     return escapeHtml(m.content);
   }
