@@ -6,7 +6,9 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
