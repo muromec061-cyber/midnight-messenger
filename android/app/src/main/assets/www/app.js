@@ -3,6 +3,24 @@
   const $ = sel => document.querySelector(sel);
   const $$ = sel => Array.from(document.querySelectorAll(sel));
 
+  // ---------- modal helpers ----------
+  const showModal = id => $('#' + id).classList.remove('hidden');
+  const hideModal = id => $('#' + id).classList.add('hidden');
+  // Close a modal when its backdrop (the element itself) is clicked.
+  function bindBackdropDismiss(id) {
+    $('#' + id).addEventListener('click', e => { if (e.target.id === id) hideModal(id); });
+  }
+  const focusSoon = sel => setTimeout(() => $(sel).focus(), 50);
+
+  // Re-render the chat list honouring the current search filter.
+  const refreshChatList = () => renderChatList($('#chatSearch').value);
+
+  // Run an async action, surfacing any error via alert().
+  async function withAlert(fn) {
+    try { return await fn(); }
+    catch (e) { alert(e.message); }
+  }
+
   function getApiBase() {
     const stored = localStorage.getItem('mm.apiBase');
     if (stored) return stored.replace(/\/+$/, '');
@@ -93,12 +111,10 @@
     const url = $('#serverInput').value.trim();
     if (!/^https?:\/\//i.test(url)) return alert('URL должен начинаться с http:// или https://');
     setServerBase(url);
-    $('#serverModal').classList.add('hidden');
+    hideModal('serverModal');
     bootstrap();
   });
-  $('#serverModal').addEventListener('click', e => {
-    if (e.target.id === 'serverModal') $('#serverModal').classList.add('hidden');
-  });
+  bindBackdropDismiss('serverModal');
   $('#changeServerBtn').addEventListener('click', openServerConfig);
 
   async function handleAuth(formId, url) {
@@ -148,9 +164,9 @@
   }
 
   function openServerConfig() {
-    $('#serverModal').classList.remove('hidden');
+    showModal('serverModal');
     $('#serverInput').value = localStorage.getItem('mm.apiBase') || '';
-    setTimeout(() => $('#serverInput').focus(), 50);
+    focusSoon('#serverInput');
   }
 
   function setServerBase(url) {
@@ -221,7 +237,7 @@
   async function openChat(convId) {
     state.activeChat = convId;
     document.querySelector('.messenger').classList.add('show-chat');
-    renderChatList($('#chatSearch').value);
+    refreshChatList();
     const chat = state.chats.get(convId);
     const peer = chat?.others?.[0];
     $('#peerName').textContent = peer ? (peer.displayName || peer.username) : 'Сохранённые сообщения';
@@ -318,7 +334,7 @@
         loadChats();
       }
       if (state.activeChat === m.conversationId) renderMessages(m.conversationId);
-      renderChatList($('#chatSearch').value);
+      refreshChatList();
     });
 
     state.socket.on('typing:event', ({ conversationId, userId, isTyping }) => {
@@ -333,7 +349,7 @@
       else state.onlineUsers.delete(userId);
       state.presence.set(userId, lastSeen);
       updatePeerStatus();
-      renderChatList($('#chatSearch').value);
+      refreshChatList();
     });
 
     state.socket.on('user_updated', user => {
@@ -342,7 +358,7 @@
         for (const o of chat.others || []) if (o.id === user.id) Object.assign(o, user);
       }
       if (state.activeChat) updatePeerStatus();
-      renderChatList($('#chatSearch').value);
+      refreshChatList();
     });
 
     state.socket.on('message:read', ({ conversationId }) => {
@@ -374,13 +390,13 @@
 
   // ---------- new chat ----------
   $('#openNewChat').addEventListener('click', () => {
-    $('#newChatModal').classList.remove('hidden');
+    showModal('newChatModal');
     $('#userSearch').value = '';
     $('#userResults').innerHTML = '';
-    setTimeout(() => $('#userSearch').focus(), 50);
+    focusSoon('#userSearch');
   });
-  $('#closeNewChat').addEventListener('click', () => $('#newChatModal').classList.add('hidden'));
-  $('#newChatModal').addEventListener('click', e => { if (e.target.id === 'newChatModal') $('#newChatModal').classList.add('hidden'); });
+  $('#closeNewChat').addEventListener('click', () => hideModal('newChatModal'));
+  bindBackdropDismiss('newChatModal');
 
   let userSearchTimeout = null;
   $('#userSearch').addEventListener('input', e => {
@@ -407,23 +423,21 @@
   }
 
   async function startChat(u) {
-    try {
+    await withAlert(async () => {
       const { conversation } = await api('/api/chats/dm', { method: 'POST', body: JSON.stringify({ userId: u.id }) });
-      $('#newChatModal').classList.add('hidden');
+      hideModal('newChatModal');
       await loadChats();
       openChat(conversation.id);
-    } catch (e) {
-      alert(e.message);
-    }
+    });
   }
 
   // ---------- profile ----------
   $('#openProfile').addEventListener('click', () => openProfile(state.me, true));
-  $('#closeProfile').addEventListener('click', () => $('#profileModal').classList.add('hidden'));
-  $('#profileModal').addEventListener('click', e => { if (e.target.id === 'profileModal') $('#profileModal').classList.add('hidden'); });
+  $('#closeProfile').addEventListener('click', () => hideModal('profileModal'));
+  bindBackdropDismiss('profileModal');
 
   function openProfile(user, self) {
-    $('#profileModal').classList.remove('hidden');
+    showModal('profileModal');
     const title = self ? 'Мой профиль' : '@' + user.username;
     $('#profileTitle').textContent = title;
     const body = $('#profileBody');
@@ -453,46 +467,38 @@
   }
 
   async function saveProfile() {
-    try {
+    await withAlert(async () => {
       const displayName = $('#pName').value.trim();
       const bio = $('#pBio').value.trim();
       const { user } = await api('/api/me', { method: 'PATCH', body: JSON.stringify({ displayName, bio }) });
       Object.assign(state.me, user);
       renderMe();
       openProfile(state.me, true);
-    } catch (e) {
-      alert(e.message);
-    }
+    });
   }
 
   async function changePassword() {
     const oldPassword = $('#pOld').value;
     const newPassword = $('#pNew').value;
     if (!oldPassword || !newPassword) return alert('Заполни оба поля');
-    try {
+    await withAlert(async () => {
       await api('/api/me', { method: 'PATCH', body: JSON.stringify({ oldPassword, newPassword }) });
       alert('Пароль изменён');
       $('#pOld').value = $('#pNew').value = '';
-    } catch (e) {
-      alert(e.message);
-    }
+    });
   }
 
   // ---------- file upload ----------
   $('#attachBtn').addEventListener('click', () => $('#hiddenFile').click());
   $('#hiddenFile').addEventListener('change', async e => {
     const f = e.target.files[0];
-    if (!f) return;
-    if (!state.activeChat) return;
-    try {
+    if (!f || !state.activeChat) { e.target.value = ''; return; }
+    await withAlert(async () => {
       const fd = new FormData(); fd.append('file', f);
       const out = await api('/api/upload', { method: 'POST', body: fd });
       socketEmit('message:send', { conversationId: state.activeChat, content: out, type: 'file' });
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      e.target.value = '';
-    }
+    });
+    e.target.value = '';
   });
 
   // ---------- back button on mobile ----------

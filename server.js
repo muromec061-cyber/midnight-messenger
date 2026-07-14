@@ -1,6 +1,5 @@
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
@@ -11,6 +10,7 @@ const { Server } = require('socket.io');
 
 const Store = require('./lib/store');
 const { sign, verify, extractToken } = require('./lib/auth');
+const { newId } = require('./lib/ids');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -61,8 +61,7 @@ const upload = multer({
     destination: UPLOAD_DIR,
     filename: (req, file, cb) => {
       const ext = path.extname(file.originalname) || '';
-      const id = crypto.randomBytes(12).toString('hex');
-      cb(null, `${id}${ext}`);
+      cb(null, `${newId(12)}${ext}`);
     },
   }),
   limits: { fileSize: 20 * 1024 * 1024 },
@@ -82,7 +81,7 @@ app.post('/api/register', async (req, res) => {
   if (Store.findUserByUsername(username))
     return res.status(409).json({ error: 'этот логин уже занят' });
 
-  const id = crypto.randomBytes(8).toString('hex');
+  const id = newId();
   const passwordHash = await bcrypt.hash(password, 10);
   const user = {
     id,
@@ -211,8 +210,8 @@ function sanitize(m) {
 app.get('/api/messages', authMiddleware, (req, res) => {
   const { conversationId, limit = 50, before } = req.query;
   if (!conversationId) return res.status(400).json({ error: 'conversationId required' });
-  const conv = Store.getConversations().find(c => c.id === conversationId);
-  if (!conv || !conv.members.includes(req.user.id)) return res.status(403).json({ error: 'forbidden' });
+  const conv = Store.findConversationForMember(conversationId, req.user.id);
+  if (!conv) return res.status(403).json({ error: 'forbidden' });
   let msgs = Store.getMessages().filter(m => m.conversationId === conversationId);
   if (before) msgs = msgs.filter(m => m.id < before);
   msgs = msgs.slice(-Number(limit));
@@ -222,8 +221,8 @@ app.get('/api/messages', authMiddleware, (req, res) => {
 app.post('/api/messages', authMiddleware, (req, res) => {
   const { conversationId, content, type = 'text', clientId } = req.body || {};
   if (!conversationId || !content) return res.status(400).json({ error: 'conversationId и content обязательны' });
-  const conv = Store.getConversations().find(c => c.id === conversationId);
-  if (!conv || !conv.members.includes(req.user.id)) return res.status(403).json({ error: 'forbidden' });
+  const conv = Store.findConversationForMember(conversationId, req.user.id);
+  if (!conv) return res.status(403).json({ error: 'forbidden' });
   const m = persistMessage({
     conversationId,
     from: req.user.id,
@@ -236,7 +235,7 @@ app.post('/api/messages', authMiddleware, (req, res) => {
 });
 
 function persistMessage({ conversationId, from, content, type = 'text', clientId = null }) {
-  const id = crypto.randomBytes(8).toString('hex');
+  const id = newId();
   const msg = {
     id,
     conversationId,
@@ -253,13 +252,16 @@ function persistMessage({ conversationId, from, content, type = 'text', clientId
   return msg;
 }
 
-function emitMessage(m, conv) {
-  const payload = sanitize(m);
+function emitToMembers(conv, event, payload) {
   for (const memberId of conv.members) {
     const set = onlineSockets.get(memberId);
     if (!set) continue;
-    for (const sock of set) sock.emit('message:new', payload);
+    for (const sock of set) sock.emit(event, payload);
   }
+}
+
+function emitMessage(m, conv) {
+  emitToMembers(conv, 'message:new', sanitize(m));
 }
 
 // ---------- socket.io ----------
@@ -290,8 +292,8 @@ io.on('connection', (socket) => {
     try {
       const { conversationId, content, type = 'text', clientId = null } = data || {};
       if (!conversationId || !content) return ack && ack({ error: 'bad params' });
-      const conv = Store.getConversations().find(c => c.id === conversationId);
-      if (!conv || !conv.members.includes(uid)) return ack && ack({ error: 'forbidden' });
+      const conv = Store.findConversationForMember(conversationId, uid);
+      if (!conv) return ack && ack({ error: 'forbidden' });
       const m = persistMessage({ conversationId, from: uid, content, type, clientId });
       emitMessage(m, conv);
       ack && ack({ ok: true, message: sanitize(m) });
@@ -302,8 +304,8 @@ io.on('connection', (socket) => {
 
   socket.on('typing', ({ conversationId, isTyping }) => {
     if (!conversationId) return;
-    const conv = Store.getConversations().find(c => c.id === conversationId);
-    if (!conv || !conv.members.includes(uid)) return;
+    const conv = Store.findConversationForMember(conversationId, uid);
+    if (!conv) return;
     socket.to(`conv:${conversationId}`).emit('typing:event', { conversationId, userId: uid, isTyping: !!isTyping });
   });
 
@@ -320,13 +322,7 @@ io.on('connection', (socket) => {
     if (changed) {
       Store.saveMessages(msgs);
       const conv = Store.getConversations().find(c => c.id === conversationId);
-      if (conv) {
-        for (const memberId of conv.members) {
-          const set = onlineSockets.get(memberId);
-          if (!set) continue;
-          for (const sock of set) sock.emit('message:read', { conversationId, userId: uid, messageIds });
-        }
-      }
+      if (conv) emitToMembers(conv, 'message:read', { conversationId, userId: uid, messageIds });
     }
   });
 
