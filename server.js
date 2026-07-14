@@ -55,6 +55,13 @@ function dmConvId(a, b) {
   return ['dm', [a, b].sort().join('_')].join(':');
 }
 
+// Express 4 does not catch rejections from async handlers, so an unhandled
+// rejection would leave the request hanging forever. Wrap async handlers so
+// their errors are forwarded to the error-handling middleware below.
+function asyncHandler(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
 // ---------- uploads ----------
 const upload = multer({
   storage: multer.diskStorage({
@@ -73,7 +80,7 @@ app.post('/api/upload', authMiddleware, upload.single('file'), (req, res) => {
 });
 
 // ---------- auth ----------
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', asyncHandler(async (req, res) => {
   const { username, password, displayName } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'username и password обязательны' });
   if (!/^[a-zA-Z0-9_]{3,32}$/.test(username))
@@ -100,9 +107,9 @@ app.post('/api/register', async (req, res) => {
   Store.saveUsers(users);
   const token = sign(user);
   res.json({ token, user: publicUser(user) });
-});
+}));
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', asyncHandler(async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'введите логин и пароль' });
   const user = Store.findUserByUsername(username);
@@ -111,13 +118,13 @@ app.post('/api/login', async (req, res) => {
   if (!ok) return res.status(401).json({ error: 'неверный логин или пароль' });
   const token = sign(user);
   res.json({ token, user: publicUser(user) });
-});
+}));
 
 app.get('/api/me', authMiddleware, (req, res) => {
   res.json({ user: publicUser(req.user) });
 });
 
-app.patch('/api/me', authMiddleware, async (req, res) => {
+app.patch('/api/me', authMiddleware, asyncHandler(async (req, res) => {
   const { displayName, bio, avatar, oldPassword, newPassword } = req.body || {};
   const users = Store.getUsers();
   const idx = users.findIndex(u => u.id === req.user.id);
@@ -137,7 +144,7 @@ app.patch('/api/me', authMiddleware, async (req, res) => {
   // notify profile change
   io.emit('user_updated', publicUser(users[idx]));
   res.json({ user: publicUser(users[idx]) });
-});
+}));
 
 // ---------- users ----------
 app.get('/api/users', authMiddleware, (req, res) => {
@@ -296,18 +303,21 @@ io.on('connection', (socket) => {
       emitMessage(m, conv);
       ack && ack({ ok: true, message: sanitize(m) });
     } catch (e) {
-      ack && ack({ error: e.message });
+      // Log the real cause server-side; report a generic failure to the client
+      // rather than leaking internal error details.
+      console.error('socket message:send failed for user', uid, e);
+      ack && ack({ error: 'could not send message' });
     }
   });
 
-  socket.on('typing', ({ conversationId, isTyping }) => {
+  socket.on('typing', safeSocketHandler('typing', ({ conversationId, isTyping }) => {
     if (!conversationId) return;
     const conv = Store.getConversations().find(c => c.id === conversationId);
     if (!conv || !conv.members.includes(uid)) return;
     socket.to(`conv:${conversationId}`).emit('typing:event', { conversationId, userId: uid, isTyping: !!isTyping });
-  });
+  }));
 
-  socket.on('message:read', ({ conversationId, messageIds }) => {
+  socket.on('message:read', safeSocketHandler('message:read', ({ conversationId, messageIds }) => {
     if (!conversationId || !Array.isArray(messageIds)) return;
     const msgs = Store.getMessages();
     let changed = false;
@@ -328,14 +338,14 @@ io.on('connection', (socket) => {
         }
       }
     }
-  });
+  }));
 
-  socket.on('join:conv', ({ conversationId }) => {
+  socket.on('join:conv', safeSocketHandler('join:conv', ({ conversationId }) => {
     if (!conversationId) return;
     socket.join(`conv:${conversationId}`);
-  });
+  }));
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', safeSocketHandler('disconnect', () => {
     const set = onlineSockets.get(uid);
     if (set) {
       set.delete(socket);
@@ -345,8 +355,21 @@ io.on('connection', (socket) => {
       }
     }
     userSockets.delete(socket.id);
-  });
+  }));
 });
+
+// Socket.IO event listeners run outside any request lifecycle: an exception
+// thrown here is otherwise swallowed by the event emitter (or crashes the
+// process). Wrap handlers so failures are logged instead of disappearing.
+function safeSocketHandler(event, fn) {
+  return (...args) => {
+    try {
+      return fn(...args);
+    } catch (e) {
+      console.error(`socket ${event} handler failed:`, e);
+    }
+  };
+}
 
 function setOnline(uid, online) {
   const users = Store.getUsers();
@@ -360,6 +383,30 @@ function setOnline(uid, online) {
 
 // ---------- root ----------
 app.get('/', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
+
+// ---------- error handling ----------
+// Centralized handler so errors thrown/forwarded from any route (including
+// multer upload errors and rejected async handlers) return a JSON body instead
+// of the default HTML page — and are logged rather than silently dropped.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error(`${req.method} ${req.originalUrl} failed:`, err);
+  if (res.headersSent) return next(err);
+  if (err instanceof multer.MulterError) {
+    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'файл слишком большой (макс. 20 МБ)' : err.message;
+    return res.status(400).json({ error: msg });
+  }
+  res.status(500).json({ error: 'internal server error' });
+});
+
+// Last-resort logging: a swallowed rejection/exception would otherwise leave no
+// trace (and can crash the process). Log so failures are visible in production.
+process.on('unhandledRejection', reason => {
+  console.error('unhandledRejection:', reason);
+});
+process.on('uncaughtException', err => {
+  console.error('uncaughtException:', err);
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Midnight Messenger running on http://0.0.0.0:${PORT}`);
