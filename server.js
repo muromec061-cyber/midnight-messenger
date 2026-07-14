@@ -17,15 +17,32 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const UPLOAD_DIR = path.join(__dirname, 'data', 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// Restrict cross-origin access. Set ALLOW_ORIGIN to a comma-separated list of
+// allowed origins (e.g. "https://app.example.com"). Falls back to same-origin
+// only ("*" is honoured but must be set explicitly).
+const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '';
+const allowedOrigins = ALLOW_ORIGIN.split(',').map(s => s.trim()).filter(Boolean);
+const corsOrigin = allowedOrigins.includes('*')
+  ? '*'
+  : (allowedOrigins.length ? allowedOrigins : false);
+
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, { cors: { origin: corsOrigin } });
 
-app.use(cors());
+app.use(cors({ origin: corsOrigin }));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(PUBLIC_DIR));
-app.use('/uploads', express.static(UPLOAD_DIR));
+// Serve uploads defensively: never let the browser sniff/execute uploaded
+// content inline (prevents stored XSS via uploaded HTML/SVG/JS).
+app.use('/uploads', express.static(UPLOAD_DIR, {
+  setHeaders: (res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', 'attachment');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  },
+}));
 
 // ---------- helpers ----------
 function publicUser(u) {
@@ -53,6 +70,16 @@ function authMiddleware(req, res, next) {
 
 function dmConvId(a, b) {
   return ['dm', [a, b].sort().join('_')].join(':');
+}
+
+// Only permit safe avatar URL schemes (blocks javascript:/data:text XSS vectors).
+function isSafeAvatarUrl(u) {
+  const s = String(u || '').trim();
+  if (!s) return true; // empty clears the avatar
+  if (/^https?:\/\//i.test(s)) return true;
+  if (/^data:image\//i.test(s)) return true;
+  if (/^\/(?!\/)/.test(s)) return true; // site-relative path, not protocol-relative
+  return false;
 }
 
 // ---------- uploads ----------
@@ -124,7 +151,7 @@ app.patch('/api/me', authMiddleware, async (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'user not found' });
   if (typeof displayName === 'string' && displayName.trim()) users[idx].displayName = displayName.trim().slice(0, 64);
   if (typeof bio === 'string') users[idx].bio = bio.slice(0, 256);
-  if (typeof avatar === 'string') users[idx].avatar = avatar;
+  if (typeof avatar === 'string' && isSafeAvatarUrl(avatar)) users[idx].avatar = avatar;
   if (newPassword) {
     if (!oldPassword) return res.status(400).json({ error: 'нужен старый пароль' });
     const ok = await bcrypt.compare(oldPassword, users[idx].passwordHash);
