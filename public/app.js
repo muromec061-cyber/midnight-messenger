@@ -227,7 +227,12 @@
     $('#peerName').textContent = peer ? (peer.displayName || peer.username) : 'Сохранённые сообщения';
     updatePeerStatus();
     $('#sendForm').classList.remove('hidden');
-    await loadMessages(convId);
+    try {
+      await loadMessages(convId);
+    } catch (err) {
+      $('#messages').innerHTML = `<div class="system">Не удалось загрузить сообщения: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
     socketEmit('join:conv', { conversationId: convId });
   }
 
@@ -281,8 +286,11 @@
     const text = input.value.trim();
     if (!text || !state.activeChat) return;
     const clientId = 'c_' + Math.random().toString(36).slice(2);
-    socketEmit('message:send', { conversationId: state.activeChat, content: text, type: 'text', clientId });
-    input.value = '';
+    // Only clear the input once the message actually left the client; otherwise
+    // a disconnected socket would drop the text silently and lose it.
+    const sent = socketEmit('message:send', { conversationId: state.activeChat, content: text, type: 'text', clientId });
+    if (sent) input.value = '';
+    else alert('Нет соединения с сервером — сообщение не отправлено');
   });
 
   let typingTimeout = null;
@@ -315,7 +323,7 @@
         chat.lastMessage = m;
         state.chatOrder = state.chatOrder.filter(id => id !== chat.id).concat(chat.id);
       } else {
-        loadChats();
+        loadChats().catch(err => console.error('loadChats failed:', err));
       }
       if (state.activeChat === m.conversationId) renderMessages(m.conversationId);
       renderChatList($('#chatSearch').value);
@@ -368,8 +376,12 @@
   }
 
   function socketEmit(ev, payload) {
-    if (state.socket && state.socket.connected) state.socket.emit(ev, payload);
-    else console.warn('socket not connected, dropping', ev);
+    if (state.socket && state.socket.connected) {
+      state.socket.emit(ev, payload);
+      return true;
+    }
+    console.warn('socket not connected, dropping', ev);
+    return false;
   }
 
   // ---------- new chat ----------
@@ -487,7 +499,8 @@
     try {
       const fd = new FormData(); fd.append('file', f);
       const out = await api('/api/upload', { method: 'POST', body: fd });
-      socketEmit('message:send', { conversationId: state.activeChat, content: out, type: 'file' });
+      if (!socketEmit('message:send', { conversationId: state.activeChat, content: out, type: 'file' }))
+        alert('Нет соединения с сервером — файл загружен, но не отправлен');
     } catch (err) {
       alert(err.message);
     } finally {
