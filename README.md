@@ -183,6 +183,12 @@ Keystore в репо — публичный dev-ключ, перед публи�
 - Пересылка, цитаты, удаление
 - Голосовые сообщения (MediaRecorder на стороне Android)
 
+## Telegram Agent Bot
+
+В проект добавлен многопользовательский Telegram-бот с командой агентов, потоками и режимами мощности. Бот развёртывается на Supabase Edge Functions.
+
+См. [TELEGRAM_BOT.md](TELEGRAM_BOT.md) для настройки и деплоя.
+
 ---
 
 Сделано как MVP на один сеанс. Серверная часть production-ready (JWT, bcrypt, валидация, multer, Socket.IO с auth handshake). UI — полнофункциональный мессенджер без рекламы и без номера телефона.
