@@ -152,6 +152,7 @@ async function handleCallback(
     }
     const switched = await db.getThreadById(action, from.id);
     if (switched) {
+      await db.updateThread(switched);
       return sendAnswer(botToken, chat.id, markup.threadSwitched(switched));
     }
   }

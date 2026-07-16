@@ -72,9 +72,7 @@ export function textToHtml(text: string): string {
 }
 
 function formatPlain(chunk: string): string {
-  return escapeHtml(chunk)
-    .replace(/\n\n/g, "</p><p>")
-    .replace(/\n/g, "<br>");
+  return escapeHtml(chunk);
 }
 
 function kb(rows: InlineButton[][]): object {
