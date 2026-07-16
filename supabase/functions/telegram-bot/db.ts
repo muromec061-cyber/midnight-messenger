@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from "@supabase/supabase-js";
 import type { MessageRecord, Thread } from "./types.ts";
 
 let client: ReturnType<typeof createClient> | null = null;
