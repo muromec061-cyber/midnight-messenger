@@ -30,10 +30,11 @@ async function handleMessage(
   let thread = await db.getOrCreateThread(from.id, chat.id);
 
   if (text.startsWith("/")) {
-    const [command, ...args] = text.slice(1).split(/\s+/, 2);
-    const rest = args.join(" ").trim();
+    const match = text.match(/^\/([a-zA-Z0-9_]+)(?:@\S+)?\s*(.*)$/);
+    const command = (match?.[1] || "").toLowerCase();
+    const rest = (match?.[2] || "").trim();
 
-    switch (command.toLowerCase()) {
+    switch (command) {
       case "start":
         return sendAnswer(botToken, chat.id, markup.welcomeMessage());
       case "agents":
